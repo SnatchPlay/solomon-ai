@@ -14,13 +14,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin')
+  const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
   const [redirecting, setRedirecting] = useState(false)
 
-  // Supabase's Site URL is set to /login, so invite and password-reset emails
-  // land here with access_token in the URL hash. Extract the tokens, call
-  // setSession so they are stored in cookies, then hard-navigate to the
-  // reset-password page (no hash needed — getSession will find it in cookies).
+  // Supabase Site URL is solomon.quitcode.com so invite + recovery emails
+  // land here with access_token in the URL hash instead of the intended page.
+  // Establish the session from the hash then hard-redirect to reset-password.
   useEffect(() => {
     const hash = window.location.hash
     if (!hash) return
@@ -47,20 +46,9 @@ export default function LoginPage() {
         if (error) throw error
         router.push('/dashboard')
         router.refresh()
-
-      } else if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
-        })
-        if (error) throw error
-        toast.success('Account created! Check your email to confirm.')
-        setMode('signin')
-
       } else {
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
+          redirectTo: `${window.location.origin}/auth/reset-password`,
         })
         if (error) throw error
         toast.success('Password reset email sent. Check your inbox.')
@@ -92,13 +80,11 @@ export default function LoginPage() {
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="text-lg">
-              {mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Reset password'}
+              {mode === 'signin' ? 'Sign in' : 'Reset password'}
             </CardTitle>
             <CardDescription>
               {mode === 'signin'
                 ? 'Enter your credentials to access your projects'
-                : mode === 'signup'
-                ? 'Set up your Solomon account'
                 : "Enter your email and we'll send a reset link"}
             </CardDescription>
           </CardHeader>
@@ -117,7 +103,7 @@ export default function LoginPage() {
                 />
               </div>
 
-              {mode !== 'forgot' && (
+              {mode === 'signin' && (
                 <div className="space-y-1.5">
                   <Label htmlFor="password">Password</Label>
                   <Input
@@ -133,39 +119,20 @@ export default function LoginPage() {
               )}
 
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading
-                  ? 'Loading...'
-                  : mode === 'signin'
-                  ? 'Sign in'
-                  : mode === 'signup'
-                  ? 'Create account'
-                  : 'Send reset email'}
+                {loading ? 'Loading...' : mode === 'signin' ? 'Sign in' : 'Send reset email'}
               </Button>
             </form>
 
             <div className="mt-4 flex flex-col items-center gap-1.5 text-sm text-muted-foreground">
-              {mode === 'signin' && (
-                <>
-                  <button
-                    type="button"
-                    className="font-medium text-foreground underline-offset-2 hover:underline"
-                    onClick={() => setMode('forgot')}
-                  >
-                    Forgot password?
-                  </button>
-                  <span>
-                    Don&apos;t have an account?{' '}
-                    <button
-                      type="button"
-                      className="font-medium text-foreground underline-offset-2 hover:underline"
-                      onClick={() => setMode('signup')}
-                    >
-                      Sign up
-                    </button>
-                  </span>
-                </>
-              )}
-              {mode !== 'signin' && (
+              {mode === 'signin' ? (
+                <button
+                  type="button"
+                  className="font-medium text-foreground underline-offset-2 hover:underline"
+                  onClick={() => setMode('forgot')}
+                >
+                  Forgot password?
+                </button>
+              ) : (
                 <button
                   type="button"
                   className="font-medium text-foreground underline-offset-2 hover:underline"
@@ -173,6 +140,11 @@ export default function LoginPage() {
                 >
                   Back to sign in
                 </button>
+              )}
+              {mode === 'signin' && (
+                <span className="text-xs text-muted-foreground text-center">
+                  Don&apos;t have an account? Contact your administrator.
+                </span>
               )}
             </div>
           </CardContent>
