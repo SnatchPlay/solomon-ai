@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createAdminClient } from '@/lib/supabase/server'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -7,15 +7,29 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data: project, error } = await supabase
+  const adminClient = await createAdminClient()
+
+  const { data: project, error } = await adminClient
     .from('projects')
     .select('id, name, github_repo_url, github_exported_at, github_sync_error, user_id')
     .eq('id', id)
-    .eq('user_id', user.id)   // owner-only — intentional
     .single()
   if (error || !project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  return NextResponse.json(project)
+  const isOwner = project.user_id === user.id
+  if (!isOwner) {
+    const { data: membership } = await adminClient
+      .from('project_members')
+      .select('role')
+      .eq('project_id', id)
+      .eq('user_id', user.id)
+      .single()
+    if (!membership || membership.role === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
+
+  return NextResponse.json({ ...project, isOwner })
 }
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {

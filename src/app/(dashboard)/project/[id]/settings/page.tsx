@@ -32,6 +32,7 @@ export default function ProjectSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<PromptStage | null>(null)
   const [isOwner, setIsOwner] = useState(false)
+  const [canManageGitHub, setCanManageGitHub] = useState(false)
   const [githubRepoUrl, setGithubRepoUrl] = useState<string | null>(null)
   const [githubExportedAt, setGithubExportedAt] = useState<string | null>(null)
   const [githubSyncError, setGithubSyncError] = useState<string | null>(null)
@@ -59,8 +60,8 @@ export default function ProjectSettingsPage() {
         setSystemDefaults(prev => ({ ...prev, ...map }))
       }
       if (project) {
-        // project is returned only for the owner (GET route requires user_id match)
-        setIsOwner(true)
+        setIsOwner(project.isOwner ?? false)
+        setCanManageGitHub(true) // API returns 200 for owners and editors, 403 for viewers
         setGithubRepoUrl(project.github_repo_url ?? null)
         setGithubExportedAt(project.github_exported_at ?? null)
         setGithubSyncError(project.github_sync_error ?? null)
@@ -243,9 +244,9 @@ export default function ProjectSettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!isOwner ? (
+              {!canManageGitHub ? (
                 <p className="text-sm text-muted-foreground">
-                  GitHub settings are only visible to the project owner.
+                  GitHub settings are only visible to project editors and owners.
                 </p>
               ) : (
               <>
