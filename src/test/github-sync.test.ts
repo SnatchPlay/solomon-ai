@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ── Hoist shared mock references so they are available inside vi.mock factories ──
 const { mockUpdate, mockFrom } = vi.hoisted(() => {
@@ -18,6 +18,9 @@ vi.mock('@/lib/github', () => ({
   GitHubError: class GitHubError extends Error {
     constructor(public status: number, message: string) { super(message) }
   },
+  deleteRepoFile: vi.fn(),
+  getRepoFileSha: vi.fn(),
+  listRepoDir: vi.fn(),
   pushFile: vi.fn(),
   createMilestone: vi.fn(),
   updateMilestone: vi.fn(),
@@ -28,6 +31,30 @@ vi.mock('@/lib/github', () => ({
 
 import { repoNameFromUrl, syncPrdToGitHub } from '@/lib/github-sync'
 import { pushFile, GitHubError } from '@/lib/github'
+
+function singleQuery(data: unknown) {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data }),
+      }),
+    }),
+  }
+}
+
+function latestQuery(data: unknown) {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        order: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            maybeSingle: vi.fn().mockResolvedValue({ data }),
+          }),
+        }),
+      }),
+    }),
+  }
+}
 
 // ── Pure function tests ────────────────────────────────────────────────────────
 describe('repoNameFromUrl', () => {
@@ -54,11 +81,7 @@ describe('syncPrdToGitHub', () => {
   })
 
   it('returns empty object (silent skip) when project has no github_repo_url', async () => {
-    mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { user_id: 'u1', github_repo_url: null } }) }),
-      }),
-    })
+    mockFrom.mockReturnValue(singleQuery({ user_id: 'u1', github_repo_url: null }))
     const result = await syncPrdToGitHub('proj-1')
     expect(result).toEqual({})
     expect(pushFile).not.toHaveBeenCalled()
@@ -71,11 +94,11 @@ describe('syncPrdToGitHub', () => {
       callCount++
       if (callCount === 1) {
         // projects query (user-scoped)
-        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { user_id: 'u1', github_repo_url: 'https://github.com/user/repo' } }) }) }) }
+        return singleQuery({ user_id: 'u1', github_repo_url: 'https://github.com/user/repo' })
       }
       if (callCount === 2) {
         // prd query
-        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'prd-1', content: '# PRD', github_file_sha: null } }) }) }) }
+        return latestQuery({ id: 'prd-1', content: '# PRD', github_file_sha: null })
       }
       // prd update + projects update
       return { update: mockUpdate }
@@ -91,10 +114,10 @@ describe('syncPrdToGitHub', () => {
     mockFrom.mockImplementation(() => {
       callCount++
       if (callCount === 1) {
-        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { user_id: 'u1', github_repo_url: 'https://github.com/user/repo' } }) }) }) }
+        return singleQuery({ user_id: 'u1', github_repo_url: 'https://github.com/user/repo' })
       }
       if (callCount === 2) {
-        return { select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ single: vi.fn().mockResolvedValue({ data: { id: 'prd-1', content: '# PRD', github_file_sha: null } }) }) }) }
+        return latestQuery({ id: 'prd-1', content: '# PRD', github_file_sha: null })
       }
       return { update: mockUpdate }
     })

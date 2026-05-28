@@ -8,7 +8,7 @@ import {
   copyRepoDir,
   pushFile,
 } from '@/lib/github'
-import { repoNameFromUrl } from '@/lib/github-sync'
+import { repoNameFromUrl, syncBacklogDocsToGitHub } from '@/lib/github-sync'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -69,6 +69,9 @@ export async function POST(request: Request, { params }: Params) {
   const repoName = body.repoName?.trim() || slugifyRepoName(project.name)
   const isPrivate = body.isPrivate ?? false
 
+  const logPrefix = `[github/init project=${id}]`
+  console.log(`${logPrefix} start repoName=${repoName} isPrivate=${isPrivate} reusingRepo=${!!project.github_repo_url}`)
+
   try {
     let repoFullName: string
     let repoUrl: string
@@ -77,25 +80,39 @@ export async function POST(request: Request, { params }: Params) {
       // Partial export — reuse existing repo
       repoUrl = project.github_repo_url
       repoFullName = repoNameFromUrl(repoUrl)
+      console.log(`${logPrefix} reusing existing repo ${repoFullName}`)
     } else {
       // Create new repo
       const repo = await createRepo(token, org, repoName, isPrivate)
       repoFullName = repo.full_name
       repoUrl = repo.html_url
+      console.log(`${logPrefix} created repo ${repoFullName}`)
       // Save immediately so partial retry works
-      await supabase.from('projects').update({ github_repo_url: repoUrl }).eq('id', id)
+      const { error: repoUpdateError } = await adminClient
+        .from('projects')
+        .update({ github_repo_url: repoUrl })
+        .eq('id', id)
+      if (repoUpdateError) throw repoUpdateError
     }
 
     // Sync template GitHub workflows/config
+    console.log(`${logPrefix} copying .github from template ${templateRepo}`)
     await copyRepoDir(token, templateRepo, '.github', repoFullName, '.github')
+    console.log(`${logPrefix} .github copied`)
 
     // Push Charter (if content exists)
-    const { data: charter } = await supabase
+    const { data: charter, error: charterErr } = await adminClient
       .from('project_charter')
       .select('id, content, github_file_sha')
       .eq('project_id', id)
-      .single()
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (charterErr) {
+      console.warn(`${logPrefix} charter lookup error: ${charterErr.message}`)
+    }
     if (charter?.content) {
+      console.log(`${logPrefix} pushing docs/Charter.md (length=${charter.content.length})`)
       const { sha } = await pushFile(
         token,
         repoFullName,
@@ -104,16 +121,29 @@ export async function POST(request: Request, { params }: Params) {
         charter.github_file_sha ?? undefined,
         'docs: add Project Charter'
       )
-      await supabase.from('project_charter').update({ github_file_sha: sha }).eq('id', charter.id)
+      const { error: charterUpdateError } = await adminClient
+        .from('project_charter')
+        .update({ github_file_sha: sha })
+        .eq('id', charter.id)
+      if (charterUpdateError) throw charterUpdateError
+      console.log(`${logPrefix} docs/Charter.md pushed sha=${sha}`)
+    } else {
+      console.log(`${logPrefix} skipping Charter — no content (charterRow=${!!charter})`)
     }
 
     // Push PRD (if content exists)
-    const { data: prd } = await supabase
+    const { data: prd, error: prdErr } = await adminClient
       .from('prd')
       .select('id, content, github_file_sha')
       .eq('project_id', id)
-      .single()
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (prdErr) {
+      console.warn(`${logPrefix} prd lookup error: ${prdErr.message}`)
+    }
     if (prd?.content) {
+      console.log(`${logPrefix} pushing docs/PRD.md (length=${prd.content.length})`)
       const { sha } = await pushFile(
         token,
         repoFullName,
@@ -122,15 +152,28 @@ export async function POST(request: Request, { params }: Params) {
         prd.github_file_sha ?? undefined,
         'docs: add PRD'
       )
-      await supabase.from('prd').update({ github_file_sha: sha }).eq('id', prd.id)
+      const { error: prdUpdateError } = await adminClient
+        .from('prd')
+        .update({ github_file_sha: sha })
+        .eq('id', prd.id)
+      if (prdUpdateError) throw prdUpdateError
+      console.log(`${logPrefix} docs/PRD.md pushed sha=${sha}`)
+    } else {
+      console.log(`${logPrefix} skipping PRD — no content (prdRow=${!!prd})`)
     }
 
+    console.log(`${logPrefix} syncing docs/epics/*.md and docs/stories/*.md`)
+    await syncBacklogDocsToGitHub(id, token, repoFullName)
+    console.log(`${logPrefix} backlog docs synced`)
+
     // Mark export complete
-    await supabase
+    const { error: exportUpdateError } = await adminClient
       .from('projects')
       .update({ github_exported_at: new Date().toISOString(), github_sync_error: null })
       .eq('id', id)
+    if (exportUpdateError) throw exportUpdateError
 
+    console.log(`${logPrefix} done repoUrl=${repoUrl}`)
     return NextResponse.json({ repoUrl })
   } catch (err) {
     let message: string
@@ -150,9 +193,11 @@ export async function POST(request: Request, { params }: Params) {
         message = err.message
         httpStatus = err.status
       }
+      console.error(`${logPrefix} GitHubError status=${err.status} message=${err.message}`)
     } else {
       message = 'Failed to export to GitHub'
       httpStatus = 500
+      console.error(`${logPrefix} unexpected error`, err)
     }
 
     await adminClient.from('projects').update({ github_sync_error: message }).eq('id', id)

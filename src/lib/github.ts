@@ -57,6 +57,7 @@ type GitHubContentsItem = {
   type: 'file' | 'dir' | 'symlink' | 'submodule'
   name: string
   path: string
+  sha?: string
 }
 
 type GitHubContentsFile = {
@@ -173,6 +174,19 @@ export async function pushFile(
   })
   const data = await res.json() as { content: { sha: string } }
   return { sha: data.content.sha }
+}
+
+export async function deleteRepoFile(
+  token: string,
+  repo: string,
+  path: string,
+  sha: string,
+  message = 'chore: remove stale requirements file'
+): Promise<void> {
+  await ghFetch(token, `/repos/${repo}/contents/${path}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ message, sha }),
+  })
 }
 
 export async function createMilestone(

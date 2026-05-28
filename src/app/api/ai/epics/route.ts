@@ -3,6 +3,13 @@ import { createClient } from '@/lib/supabase/server'
 import { generateText } from '@/lib/ai/providers'
 import { getEffectiveAISettings } from '@/lib/ai/settings'
 
+function maxEpicNumber(existingCodes: Array<{ code: string }>): number {
+  return existingCodes.reduce((highest, row) => {
+    const match = row.code.match(/^E-(\d+)$/)
+    return match ? Math.max(highest, Number(match[1])) : highest
+  }, 0)
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -129,12 +136,15 @@ Output only the JSON array.
       error = result.error
     } else {
       // Append new epics
-      const { count: existing } = await supabase
-        .from('epics').select('*', { count: 'exact', head: true }).eq('project_id', project_id)
+      const [{ count: existing }, { data: existingCodes }] = await Promise.all([
+        supabase.from('epics').select('*', { count: 'exact', head: true }).eq('project_id', project_id),
+        supabase.from('epics').select('code').eq('project_id', project_id),
+      ])
+      const nextNumber = maxEpicNumber(existingCodes ?? []) + 1
 
       const epicsToInsert = epicsData.map((e, i) => ({
         project_id,
-        code: `E-${String((existing ?? 0) + i + 1).padStart(3, '0')}`,
+        code: `E-${String(nextNumber + i).padStart(3, '0')}`,
         title: e.title,
         description: e.description,
         acceptance_criteria: e.acceptance_criteria,

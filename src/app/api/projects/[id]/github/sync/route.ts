@@ -5,7 +5,7 @@ import {
   GitHubError,
   pushFile,
 } from '@/lib/github'
-import { repoNameFromUrl } from '@/lib/github-sync'
+import { repoNameFromUrl, syncBacklogDocsToGitHub } from '@/lib/github-sync'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -54,32 +54,38 @@ export async function POST(_req: Request, { params }: Params) {
 
   try {
     // Sync Charter
-    const { data: charter } = await supabase
+    const { data: charter } = await adminClient
       .from('project_charter')
       .select('id, content, github_file_sha')
       .eq('project_id', id)
-      .single()
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle()
     if (charter?.content) {
       const { sha } = await pushFile(
         token, repoFullName, 'docs/Charter.md', charter.content, charter.github_file_sha ?? undefined
       )
-      await supabase.from('project_charter').update({ github_file_sha: sha }).eq('id', charter.id)
+      await adminClient.from('project_charter').update({ github_file_sha: sha }).eq('id', charter.id)
     }
 
     // Sync PRD
-    const { data: prd } = await supabase
+    const { data: prd } = await adminClient
       .from('prd')
       .select('id, content, github_file_sha')
       .eq('project_id', id)
-      .single()
+      .order('version', { ascending: false })
+      .limit(1)
+      .maybeSingle()
     if (prd?.content) {
       const { sha } = await pushFile(
         token, repoFullName, 'docs/PRD.md', prd.content, prd.github_file_sha ?? undefined
       )
-      await supabase.from('prd').update({ github_file_sha: sha }).eq('id', prd.id)
+      await adminClient.from('prd').update({ github_file_sha: sha }).eq('id', prd.id)
     }
 
-    await supabase
+    await syncBacklogDocsToGitHub(id, token, repoFullName)
+
+    await adminClient
       .from('projects')
       .update({ github_sync_error: null, github_exported_at: new Date().toISOString() })
       .eq('id', id)

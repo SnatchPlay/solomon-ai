@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
+function nextEpicCode(existingCodes: Array<{ code: string }>): string {
+  const max = existingCodes.reduce((highest, row) => {
+    const match = row.code.match(/^E-(\d+)$/)
+    return match ? Math.max(highest, Number(match[1])) : highest
+  }, 0)
+  return `E-${String(max + 1).padStart(3, '0')}`
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const projectId = searchParams.get('project_id')
@@ -29,9 +37,11 @@ export async function POST(request: Request) {
   const { project_id, title, description, acceptance_criteria, priority } = body
 
   // Generate code
-  const { count } = await supabase
-    .from('epics').select('*', { count: 'exact', head: true }).eq('project_id', project_id)
-  const code = `E-${String((count ?? 0) + 1).padStart(3, '0')}`
+  const [{ data: existingCodes }, { count }] = await Promise.all([
+    supabase.from('epics').select('code').eq('project_id', project_id),
+    supabase.from('epics').select('*', { count: 'exact', head: true }).eq('project_id', project_id),
+  ])
+  const code = nextEpicCode(existingCodes ?? [])
 
   const { data, error } = await supabase
     .from('epics')

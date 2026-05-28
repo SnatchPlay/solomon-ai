@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
+function nextStoryCode(existingCodes: Array<{ code: string }>): string {
+  const max = existingCodes.reduce((highest, row) => {
+    const match = row.code.match(/^US-(\d+)$/)
+    return match ? Math.max(highest, Number(match[1])) : highest
+  }, 0)
+  return `US-${String(max + 1).padStart(3, '0')}`
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const projectId = searchParams.get('project_id')
@@ -28,9 +36,11 @@ export async function POST(request: Request) {
   const body = await request.json()
   const { project_id, epic_id, title, as_a, i_want, so_that, acceptance_criteria, priority, effort_estimate } = body
 
-  const { count } = await supabase
-    .from('user_stories').select('*', { count: 'exact', head: true }).eq('project_id', project_id)
-  const code = `US-${String((count ?? 0) + 1).padStart(3, '0')}`
+  const [{ data: existingCodes }, { count }] = await Promise.all([
+    supabase.from('user_stories').select('code').eq('project_id', project_id),
+    supabase.from('user_stories').select('*', { count: 'exact', head: true }).eq('project_id', project_id),
+  ])
+  const code = nextStoryCode(existingCodes ?? [])
 
   const { data, error } = await supabase
     .from('user_stories')

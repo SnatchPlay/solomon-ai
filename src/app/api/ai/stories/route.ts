@@ -3,6 +3,13 @@ import { createClient } from '@/lib/supabase/server'
 import { generateText } from '@/lib/ai/providers'
 import { getEffectiveAISettings } from '@/lib/ai/settings'
 
+function maxStoryNumber(existingCodes: Array<{ code: string }>): number {
+  return existingCodes.reduce((highest, row) => {
+    const match = row.code.match(/^US-(\d+)$/)
+    return match ? Math.max(highest, Number(match[1])) : highest
+  }, 0)
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -82,13 +89,16 @@ Output only the JSON array.
       acceptance_criteria: string[]; priority: string; effort_estimate: string
     }>
 
-    const { count: existing } = await supabase
-      .from('user_stories').select('*', { count: 'exact', head: true }).eq('project_id', project_id)
+    const [{ count: existing }, { data: existingCodes }] = await Promise.all([
+      supabase.from('user_stories').select('*', { count: 'exact', head: true }).eq('project_id', project_id),
+      supabase.from('user_stories').select('code').eq('project_id', project_id),
+    ])
+    const nextNumber = maxStoryNumber(existingCodes ?? []) + 1
 
     const storiesToInsert = storiesData.map((s, i) => ({
       project_id,
       epic_id: epic_id ?? null,
-      code: `US-${String((existing ?? 0) + i + 1).padStart(3, '0')}`,
+      code: `US-${String(nextNumber + i).padStart(3, '0')}`,
       title: s.title,
       as_a: s.as_a ?? '',
       i_want: s.i_want ?? '',
